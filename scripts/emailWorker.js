@@ -247,20 +247,39 @@ const EmailLog = mongoose.model('EmailLog', emailLogSchema);
 const EmailTemplate = mongoose.model('EmailTemplate', emailTemplateSchema);
 const ContactGroup = mongoose.model('ContactGroup', contactGroupSchema);
 
+const transporterCache = new Map();
+
 // Define sendEmail function directly here instead of importing
 async function sendEmail(smtpConfig, emailDetails) {
   const { to, subject, html, from, attachments = [] } = emailDetails;
 
-  // Create transporter with user's SMTP settings
-  const transporter = nodemailer.createTransport({
-    host: smtpConfig.host,
-    port: smtpConfig.port,
-    secure: smtpConfig.secure,
-    auth: {
-      user: smtpConfig.username,
-      pass: smtpConfig.password,
-    },
-  });
+  const cacheKey = `${smtpConfig.host}:${smtpConfig.port}:${smtpConfig.secure}:${smtpConfig.username}:${smtpConfig.password}`;
+  let transporter = transporterCache.get(cacheKey);
+
+  if (!transporter) {
+    transporter = nodemailer.createTransport({
+      pool: true,
+      host: smtpConfig.host,
+      port: parseInt(smtpConfig.port),
+      secure: smtpConfig.secure === true || smtpConfig.secure === 'true',
+      auth: {
+        user: smtpConfig.username,
+        pass: smtpConfig.password,
+      },
+      maxConnections: 3,
+      maxMessages: 100,
+      rateDelta: 2000,
+      rateLimit: 1,
+      connectionTimeout: 15000, // 15 seconds
+      greetingTimeout: 15000,   // 15 seconds
+      socketTimeout: 30000,     // 30 seconds
+      tls: {
+        rejectUnauthorized: false,
+        minVersion: 'TLSv1.2',
+      },
+    });
+    transporterCache.set(cacheKey, transporter);
+  }
 
   // Set default sender if not provided
   const sender = from || smtpConfig.username;
