@@ -1,14 +1,18 @@
-'use client';
+  'use client';
 
 import { useState, useEffect } from 'react';
 
 export default function TestEmail() {
   const [testEmail, setTestEmail] = useState({
     to: '',
+    groupId: '',
     templateId: '',
     variables: {},
+    sendMode: 'single', // 'single' or 'group'
+    useQueue: false,    // true to test the queue worker path
   });
   const [templates, setTemplates] = useState([]);
+  const [groups, setGroups] = useState([]);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
@@ -16,6 +20,7 @@ export default function TestEmail() {
 
   useEffect(() => {
     fetchTemplates();
+    fetchGroups();
   }, []);
 
   useEffect(() => {
@@ -52,6 +57,18 @@ export default function TestEmail() {
     }
   };
 
+  const fetchGroups = async () => {
+    try {
+      const response = await fetch('/api/client/contact-groups');
+      const data = await response.json();
+      if (data.success) {
+        setGroups(data.groups);
+      }
+    } catch (error) {
+      console.error('Error fetching contact groups:', error);
+    }
+  };
+
   const handleTestEmailSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -59,12 +76,24 @@ export default function TestEmail() {
     setLoading(true);
 
     try {
+      const payload = {
+        templateId: testEmail.templateId,
+        variables: testEmail.variables,
+        useQueue: testEmail.useQueue,
+      };
+
+      if (testEmail.sendMode === 'single') {
+        payload.to = testEmail.to;
+      } else {
+        payload.groupId = testEmail.groupId;
+      }
+
       const response = await fetch('/api/client/send-email', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(testEmail),
+        body: JSON.stringify(payload),
       });
 
       const data = await response.json();
@@ -73,11 +102,18 @@ export default function TestEmail() {
         throw new Error(data.error || 'Failed to send test email');
       }
 
-      setSuccess('Test email sent successfully');
+      const deliveryMsg = testEmail.useQueue 
+        ? 'Group emails successfully queued for worker processing!' 
+        : data.message || 'Test email sent successfully';
+        
+      setSuccess(deliveryMsg);
       setTestEmail({
         to: '',
+        groupId: '',
         templateId: '',
         variables: {},
+        sendMode: testEmail.sendMode,
+        useQueue: testEmail.useQueue,
       });
       setPreview({ subject: '', body: '' });
     } catch (error) {
@@ -112,22 +148,94 @@ export default function TestEmail() {
             <span className="block sm:inline">{success}</span>
           </div>
         )}
-        <div className="grid grid-cols-1 gap-y-6 gap-x-4 sm:grid-cols-6">
-          <div className="sm:col-span-3">
-            <label htmlFor="to" className="block text-sm font-medium text-gray-900">
-              Recipient Email
-            </label>
-            <input
-              type="email"
-              name="to"
-              id="to"
-              value={testEmail.to}
-              onChange={(e) => setTestEmail({ ...testEmail, to: e.target.value })}
-              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm bg-white text-gray-900 placeholder-gray-400"
-              placeholder="recipient@example.com"
-              required
-            />
+        
+        {/* Toggle Send Mode */}
+        <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 space-y-3">
+          <label className="block text-sm font-semibold text-gray-900">
+            Delivery Configuration
+          </label>
+          <div className="flex flex-wrap gap-6">
+            <div className="flex items-center space-x-4">
+              <span className="text-sm text-gray-700 font-medium">Send To:</span>
+              <label className="inline-flex items-center">
+                <input
+                  type="radio"
+                  name="sendMode"
+                  value="single"
+                  checked={testEmail.sendMode === 'single'}
+                  onChange={() => setTestEmail({ ...testEmail, sendMode: 'single' })}
+                  className="text-indigo-600 focus:ring-indigo-500"
+                />
+                <span className="ml-2 text-sm text-gray-900">Single Recipient</span>
+              </label>
+              <label className="inline-flex items-center">
+                <input
+                  type="radio"
+                  name="sendMode"
+                  value="group"
+                  checked={testEmail.sendMode === 'group'}
+                  onChange={() => setTestEmail({ ...testEmail, sendMode: 'group' })}
+                  className="text-indigo-600 focus:ring-indigo-500"
+                />
+                <span className="ml-2 text-sm text-gray-900">Contact Group</span>
+              </label>
+            </div>
+
+            <div className="flex items-center">
+              <label className="inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={testEmail.useQueue}
+                  onChange={(e) => setTestEmail({ ...testEmail, useQueue: e.target.checked })}
+                  className="rounded text-indigo-600 focus:ring-indigo-500"
+                />
+                <span className="ml-2 text-sm text-gray-900 font-medium">
+                  Queue messages via worker (reproduces background timeouts)
+                </span>
+              </label>
+            </div>
           </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-y-6 gap-x-4 sm:grid-cols-6">
+          {testEmail.sendMode === 'single' ? (
+            <div className="sm:col-span-3">
+              <label htmlFor="to" className="block text-sm font-medium text-gray-900">
+                Recipient Email
+              </label>
+              <input
+                type="email"
+                name="to"
+                id="to"
+                value={testEmail.to}
+                onChange={(e) => setTestEmail({ ...testEmail, to: e.target.value })}
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm bg-white text-gray-900 placeholder-gray-400"
+                placeholder="recipient@example.com"
+                required={testEmail.sendMode === 'single'}
+              />
+            </div>
+          ) : (
+            <div className="sm:col-span-3">
+              <label htmlFor="groupId" className="block text-sm font-medium text-gray-900">
+                Contact Group
+              </label>
+              <select
+                name="groupId"
+                id="groupId"
+                value={testEmail.groupId}
+                onChange={(e) => setTestEmail({ ...testEmail, groupId: e.target.value })}
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm bg-white text-gray-900 placeholder-gray-400"
+                required={testEmail.sendMode === 'group'}
+              >
+                <option value="">Select a group</option>
+                {groups.map((group) => (
+                  <option key={group._id} value={group._id}>
+                    {group.name} ({group.emails.length} emails)
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div className="sm:col-span-3">
             <label htmlFor="template" className="block text-sm font-medium text-gray-900">
